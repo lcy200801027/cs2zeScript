@@ -3,42 +3,63 @@ import { CSGearSlot, CSPlayerController, CSPlayerPawn, Instance, PointTemplate }
 /** Author: Theordinary
  * Create Time:2026/1/19
  * 起源2基于JavaScript的boss追踪功能,提供一定程度上的自由配置
- * Version 1.1 Update 2026/1/25
+ * Version 1.2 Update 2026/2/15
  * 此脚本可供任意地图作者使用
  */
+
+/**
+ * 1.2更新内容
+ * 添加boss模型的targetname配置
+ * 添加boss死亡动画配置选项
+ * 添加boss停止追逐的功能
+ * 添加boss恢复追逐功能
+ * boss现在的移动默认改为关闭,需要通过IO激活(例:Ontrigger script runscriptinput boss_unfreeze 5就是延迟5秒后启用追逐)
+ * 移除了部分调试信息,不会再打印到聊天框
+ * 优化了配置列表,部分繁琐变量移动到函数内部
+ * ps:boss_template.vmap同步更新,有疑问同样可以参考
+ * 有新的问题还麻烦大伙反馈一下
+ */
+
 //服务器配置
 const Server_tickrate = 64;
 const Server_tickInterval = 1 / Server_tickrate;
 
+//脚本常规配置
 const boss_track_team = 3;//boss锁定玩家阵营,3为ct,2为t
 const boss_hp_add = 200;//boss动态血量,乘以人数后累加至血量中
-const boss_template = Instance.FindEntityByName("boss_template");//存放boss相关实体的template
-const boss_position = Instance.FindEntityByName("boss_spawn_point").GetAbsOrigin();//boss生成位置,需要将任意类实体命名,并放置在想要的位置
+const boss_template_targetname = "boss_template";//boss模板实体targetname配置
+const boss_position_targetname = "boss_spawn_point";//boss生成位置targetname配置
 const boss_phys_targetname = "boss_physbox";//boss物理碰撞实体的targetname配置
 const boss_hpbar_targetname = "boss_hp_text";//boss血条实体的targetname配置
+const boss_model_targetname = "boss_model";//boss模型的targetname配置
 const boss_track_traget_boolean = true;//boss锁定目标显示开关,若不需要改为false
+const boss_death_animation_boolean = false;//boss是否启用死亡动画,若启用则需要配置下方动画输出
+const boss_death_animation = "";//boss死亡动画名称,对应模型编辑器内的动作名字,未启用死亡动画则不用管
+const boss_death_animation_delay = 0;//boss死亡动画播放延迟,未启用死亡动画则不用管
 const config = {
     acceleration: 200,//加速度
     maxspeed: 400,//最大速度
     health: 5000,//初始血量
-    position: boss_position,
-    template: boss_template,
+    position: null,
+    template: null,
     rotabase: 0.4,//转向速度
     hatred: 6,//仇恨时间,自动更换目标所需的时间
     Buffer: 150//boss靠近减速距离
 };//boss配置
+
 /*
 脚本配置及使用说明
 完成以下实体创建
 1、point_template(命名为boss_template,若想修改为自定义名称,请修改上述参数中的boss_template=Instance.FindEntityByName("XXXXXX"),将括号内的名称替换即可)
-2、info_target(命名为boss_spawn_point,若想修改为自定义名称,请修改上述参数中的boss_position = Instance.FindEntityByName("XXXXXXXX").GetAbsOrigin(),将括号内的名称替换即可)
-3、func_phys_box(创建物理碰撞实体,命名为boss_physbox,与配置中boss_phys_targetname相同,若想自定义名称,像1、2步操作即可)将该实体存入之前创建的point_template中,并为该实体添加ondamaged 对脚本实体输入runscriptinput,参数boss_hp_subract(用于boss减血)
+2、info_target(命名为boss_spawn_point,若想修改为自定义名称,请修改上述参数中的boss_position=Instance.FindEntityByName("XXXXXX").GetAbsOrigin(),将括号内的名称替换即可)
+3、func_phys_box(创建物理碰撞实体,命名为boss_physbox,与配置中boss_phys_targetname相同,若想自定义名称,像1、2步操作即可)将该实体存入之前创建的point_template中,并为该实体添加ondamaged对脚本实体输入runscriptinput,参数boss_hp_subract(用于boss减血)
+4、prop_dynamic(创建boss模型,命名为boss_model,与配置中boss_phys_targetname相同,若想自定义名称,像1、2步操作即可)
 4、point_worldtext(创建文本实体,命名为boss_hp_text,与配置中boss_hpbar_targetname相同,若想自定义名称,像1、2步操作即可)将该实体存入之前创建的point_template中
 5、配置config参数,(已有默认参数,可按需调整)
 6、将此脚本放置在csgo_addons/你的创意工坊项目文件夹/scripts/vscripts下(没有文件夹,只需创建同名文件夹即可)
-7、创建point_script实体(r任意命名),,并在属性内的script选择该脚本路径
+7、创建point_script实体(任意命名),,并在属性内的script选择该脚本路径
 8、创建任意触发类实体,对point_script这个实体输入runscriptinput参数填script_init,触发后即可生成boss
-9、若对上述说明存有遗忘,请参考示例地图boss_template.vmap中的实体放置
+9、若对上述说明存有疑问,请参考示例地图boss_template.vmap中的实体放置
 */
 
 
@@ -180,15 +201,16 @@ class BossMain {
         this.isActive = false;//boss追踪布尔值
         this.phy = null;//为boss物理实体创建变量
         this.hpbar = null;//为boss血条血量显示创建变量
+        this.model = null;//为boss模型创建变量
         this.strafe = false;//boss是否处于加速状态
         this.slow = false;//boss是否处于减速状态
     }
     boss_init() {
         const EntityArray = this.template?.ForceSpawn(this.position);//在目标点位生成模板,并储存模板实体到数组
-        this.isActive = true;
         for (let raw in EntityArray) {
             if (EntityArray[raw]?.GetEntityName() == boss_phys_targetname && EntityArray[raw]?.IsValid()) { this.phy = EntityArray[raw] };
             if (EntityArray[raw]?.GetEntityName() == boss_hpbar_targetname && EntityArray[raw]?.IsValid()) { this.hpbar = EntityArray[raw] };
+            if (EntityArray[raw]?.GetEntityName() == boss_model_targetname && EntityArray[raw]?.IsValid()) { this.model = EntityArray[raw] };
         }
         let TargetArray = Instance.FindEntitiesByClass("player");
         let enemy = [];//筛选符合索敌阵营的玩家
@@ -203,7 +225,6 @@ class BossMain {
             else (Instance.EntFireAtTarget({ target: this.hpbar, input: "SetMessage", value: "HP:" + this.health }));
         }
         else {
-            Instance.Msg("say 未找到符合条件玩家,自动结束追踪");
             this.isActive = false;
         }
     }
@@ -309,10 +330,20 @@ class BossMain {
         else (Instance.EntFireAtTarget({ target: this.hpbar, input: "SetMessage", value: "HP:" + this.health }));
     }
     boss_death() {
-        this.isActive = false;
-        this.phy.Remove();
-        this.hpbar.Remove();
-        Timer.thinkIndex = -1;//终止循环
+        if (!boss_death_animation_boolean) {
+            this.isActive = false;
+            this.phy.Remove();
+            this.hpbar.Remove();
+            Queue_pause = true;//终止循环
+            return;
+        }
+        else {
+            this.isActive = false;
+            this.hpbar.Remove();
+            Queue_pause = true;//终止循环
+            Instance.EntFireAtTarget({ target: this.model, input: "SetIdleAnimationNotLooping", value: boss_death_animation, delay: boss_death_animation_delay });
+            Instance.EntFireAtTarget({ target: this.model, input: "SetAnimationNoResetNotLooping", value: boss_death_animation, delay: boss_death_animation_delay });
+        }
     }
 }
 
@@ -320,11 +351,10 @@ class BossMain {
 class QueueMain {
     constructor() {
         this.delay = AligntimeToTickrate(0.1);
-        this.thinkIndex = -1;//控制循环是否进行,-1为终止
     }
     startthink() {
         Instance.SetThink(() => {
-            if (this.thinkIndex == -1 || !deafult_boss.phy?.IsValid()) return;
+            if (Queue_pause || !deafult_boss.phy?.IsValid()) return;
             deafult_boss.hatetime += 0.1;
             deafult_boss.target_change();
             deafult_boss.dynamic_track();
@@ -337,21 +367,43 @@ class QueueMain {
 
 let deafult_boss = null;
 let Timer = null;
+let Queue_pause = false;
 
+//-------------------操作区--------------------
+
+//初始化boss,创建任意实体对脚本输出runscriptinput,参数栏填写script_init
 Instance.OnScriptInput("script_init", (inputData) => {
+    const template = Instance.FindEntityByName(boss_template_targetname);
+    const position = Instance.FindEntityByName(boss_position_targetname)?.GetAbsOrigin();
+    config.template = template;
+    config.position = position;
     deafult_boss = new BossMain(config);
     Timer = new QueueMain();
     deafult_boss.boss_init();
     Timer.startthink();
-    Timer.thinkIndex = 0;
+    Queue_pause = false;
 })
+
+//boss血量减少函数,同上对脚本进行输出,参数栏填写boss_hp_subract
 Instance.OnScriptInput("boss_hp_subract", (inputData) => { deafult_boss.health-- });
 
+//强制处死boss,同上对脚本进行输出,参数栏填写boss_death
 Instance.OnScriptInput("boss_death", (inputData) => {
     deafult_boss.boss_death();
 })
+
+//关闭boss移动,同上对脚本进行输出,参数栏填写boss_freeze
+Instance.OnScriptInput("boss_freeze", (inputData) => {
+    deafult_boss.isActive = false;
+})
+
+//恢复boss移动,同上对脚本进行输出,参数栏填写boss_unfreeze
+Instance.OnScriptInput("boss_unfreeze", (inputData) => {
+    deafult_boss.isActive = true;
+})
+
 Instance.OnRoundEnd((event) => {
-    Timer.thinkIndex = -1;
+    Queue_pause = true;
     deafult_boss = null;
     Timer = null;
 })
