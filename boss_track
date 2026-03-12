@@ -19,7 +19,10 @@ import { CSGearSlot, CSPlayerController, CSPlayerPawn, Instance, PointTemplate }
  * ps:boss_template.vmap同步更新,有疑问同样可以参考
  * 有新的问题还麻烦大伙反馈一下
  */
-
+/**
+ * 3.12更新内容
+ * 修复向量计算中xylen值的公式错误
+ */
 //服务器配置
 const Server_tickrate = 64;
 const Server_tickInterval = 1 / Server_tickrate;
@@ -134,7 +137,7 @@ function CalculateQangleFromTarget(self, target) {
     const selfpos = self?.GetAbsOrigin();
     const targetpos = target?.GetAbsOrigin();
     const dirVector = { x: targetpos.x - selfpos.x, y: targetpos.y - selfpos.y, z: targetpos.z - selfpos.z };//计算向量
-    const xylen = Math.sqrt(dirVector.x * dirVector.x + dirVector.y + dirVector.y);
+    const xylen = Math.sqrt(dirVector.x * dirVector.x + dirVector.y * dirVector.y);
     let pitch = 0;
     let yaw = 0;
     const roll = 0;
