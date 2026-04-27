@@ -1,4 +1,3 @@
-
 import { CSGearSlot, CSPlayerController, CSPlayerPawn, Instance, PointTemplate } from "cs_script/point_script";
 /** Author: Theordinary
  * Create Time:2026/1/19
@@ -23,6 +22,13 @@ import { CSGearSlot, CSPlayerController, CSPlayerPawn, Instance, PointTemplate }
  * 3.12更新内容
  * 修复向量计算中xylen值的公式错误
  */
+/**
+ * 4.27更新内容
+ * 修改boss索敌目标有效性校验,现在被boss锁定的玩家退出游戏后不会再导致卡死
+ * 修复boss索敌失效时,导致血量显示也出现异常的bug
+ * point_script现需要封装至point_template,每回合自动清理
+ * 跑图参数现已经移至boss_template.vmap的实体中
+ */
 //服务器配置
 const Server_tickrate = 64;
 const Server_tickInterval = 1 / Server_tickrate;
@@ -30,6 +36,7 @@ const Server_tickInterval = 1 / Server_tickrate;
 //脚本常规配置
 const boss_track_team = 3;//boss锁定玩家阵营,3为ct,2为t
 const boss_hp_add = 200;//boss动态血量,乘以人数后累加至血量中
+const boss_script = "boss_script";//boss脚本实体targetname配置
 const boss_template_targetname = "boss_template";//boss模板实体targetname配置
 const boss_position_targetname = "boss_spawn_point";//boss生成位置targetname配置
 const boss_phys_targetname = "boss_physbox";//boss物理碰撞实体的targetname配置
@@ -60,40 +67,10 @@ const config = {
 4、point_worldtext(创建文本实体,命名为boss_hp_text,与配置中boss_hpbar_targetname相同,若想自定义名称,像1、2步操作即可)将该实体存入之前创建的point_template中
 5、配置config参数,(已有默认参数,可按需调整)
 6、将此脚本放置在csgo_addons/你的创意工坊项目文件夹/scripts/vscripts下(没有文件夹,只需创建同名文件夹即可)
-7、创建point_script实体(任意命名),,并在属性内的script选择该脚本路径
-8、创建任意触发类实体,对point_script这个实体输入runscriptinput参数填script_init,触发后即可生成boss
+7、创建point_script实体(任意命名),并在属性内的script选择该脚本路径,然后将其放置在一个template中(与boss其他实体分开存放)
+8、创建任意触发类实体,对存有脚本的template触发forcespawn后即可生成boss
 9、若对上述说明存有疑问,请参考示例地图boss_template.vmap中的实体放置
 */
-
-
-//跑图参数,地图完成测试后以下部分可删除
-Instance.ServerCommand("sv_cheat 1");
-Instance.ServerCommand("bot_dont_shoot 1");
-Instance.ServerCommand("csm_max_num_cascades_override 10"); //CSM阴影绘制槽
-Instance.ServerCommand("csm_max_shadow_dist_override 1000"); //CSM阴影绘制距离
-Instance.ServerCommand("sv_staminarecoveryrate 1000"); //耐力恢复速度
-Instance.ServerCommand("sv_staminajumpcost 0"); //耐力跳跃消耗值
-Instance.ServerCommand("sv_staminamax 100"); //耐力值上限 最高100
-Instance.ServerCommand("sv_staminalandcost 0"); //耐力值落地消耗值
-Instance.ServerCommand("sv_accelerate 100"); //移动加速度
-Instance.ServerCommand("sv_stopspeed 250"); //停止运动的速度阈值
-Instance.ServerCommand("weapon_accuracy_nospread 1"); //关闭武器弹道的额外扩散
-Instance.ServerCommand("sv_disable_radar 1"); //是否禁用雷达
-Instance.ServerCommand("mp_freezetime 0"); //取消准备时间
-Instance.ServerCommand("mp_roundtime 60"); //回合时间
-Instance.ServerCommand("mp_buy_anywhere 1"); //允许在任何位置购买
-Instance.ServerCommand("mp_buytime 9999"); //购买时间
-Instance.ServerCommand("mp_maxmoney 900000"); //最大金钱
-Instance.ServerCommand("mp_startmoney 10000"); //初始金钱
-Instance.ServerCommand("sv_falldamage_scale 0"); //摔伤关闭
-Instance.ServerCommand("mp_drop_knife_enable 1"); //允许丢刀
-Instance.ServerCommand("cs2f_use_old_push 0"); //不修复push
-Instance.ServerCommand("mp_maxmoney 99999"); //金钱
-Instance.ServerCommand("mp_startmoney 99999"); //金钱
-Instance.ServerCommand("mp_ignore_round_win_conditions 1 "); //回合不因死亡结束
-Instance.ServerCommand("mp_respawn_on_death_ct 1 "); //回合不因死亡结束
-Instance.ServerCommand("mp_respawn_on_death_t 1 "); //回合不因死亡结束
-Instance.Msg("----------脚本已加载----------");
 //-------------------------------工具函数-----------------------------
 
 //计算两点距离
@@ -177,7 +154,7 @@ function AligntimeToTickrate(delay) {
 //---------------boss类--------------------------
 class BossMain {
     /**
-     * @param {object} config boss配置
+     * @param {Object} config boss配置
      * @param {Number} config.maxspeed boss最大速度
      * @param {Number} config.health boss基础血量
      * @param {Vector} config.position boss生成位置
@@ -230,24 +207,28 @@ class BossMain {
         else {
             this.isActive = false;
         }
+        Timer.startthink();
+        Queue_pause = false;
     }
     target_change() {
         if (!this.phy?.IsValid() || this.health == 0 || this.hatetime < this.hatred) return;
         this.hatetime = 0;//重置仇恨时间
         let TargetArray = Instance.FindEntitiesByClass("player");
         let enemy = [];//筛选符合索敌阵营的玩家
-        for (let player in TargetArray) {
-            if (TargetArray[player]?.GetTeamNumber() == boss_track_team) { enemy.push(TargetArray[player]) };
+        for (let player of TargetArray) {
+            if (player?.GetTeamNumber() == boss_track_team) { enemy.push(player) };
         }
         if (enemy.length > 0) {
             this.target = enemy[Math.floor(Math.random() * enemy.length)];//随机锁定一名玩家
+            this.isActive = true;
         }
         else {
             this.isActive = false;//没有符合目标玩家时停止追逐
         }
     }
     dynamic_track() {
-        if (!this.isActive || !this.phy?.IsValid() || this.health == 0 || !this.target?.IsValid()) return;
+        if (!this.isActive || !this.phy?.IsValid() || this.health == 0) return;
+        if (!this.target?.IsValid()) { this.hatetime = config.hatred; this.target_change(); return };
         let angle_pre = CalculateQangleFromTarget(this.phy, this.target);//计算面向目标实体的角度
         angle_pre.pitch = 0;//仅保留水平方向角度
         angle_pre.roll = 0;
@@ -328,15 +309,18 @@ class BossMain {
         }
     }
     boss_statue_check() {
-        if (!this.phy?.IsValid() || this.health <= 0) { this.boss_death() };
-        if (boss_track_traget_boolean) { Instance.EntFireAtTarget({ target: this.hpbar, input: "SetMessage", value: "HP:" + this.health + "\n" + this.target?.GetPlayerController()?.GetPlayerName() }) }//初始化hpbar值
-        else (Instance.EntFireAtTarget({ target: this.hpbar, input: "SetMessage", value: "HP:" + this.health }));
+        if (!this.phy?.IsValid() || this.health <= 0) { this.boss_death(); return };
+        if (this.target === null) return;
+        if (boss_track_traget_boolean && this.target.IsValid()) { Instance.EntFireAtTarget({ target: this.hpbar, input: "SetMessage", value: "HP:" + this.health + "\n" + this.target?.GetPlayerController()?.GetPlayerName() }) }//初始化hpbar值
+        else if (boss_track_traget_boolean && !this.target.IsValid()) { Instance.EntFireAtTarget({ target: this.hpbar, input: "SetMessage", value: "HP:" + this.health + "\n" + "NoTarget" }) }
+        else if (!boss_track_traget_boolean) (Instance.EntFireAtTarget({ target: this.hpbar, input: "SetMessage", value: "HP:" + this.health }));
     }
     boss_death() {
         if (!boss_death_animation_boolean) {
             this.isActive = false;
             this.phy.Remove();
             this.hpbar.Remove();
+            this.model.Remove();
             Queue_pause = true;//终止循环
             return;
         }
@@ -347,6 +331,13 @@ class BossMain {
             Instance.EntFireAtTarget({ target: this.model, input: "SetIdleAnimationNotLooping", value: boss_death_animation, delay: boss_death_animation_delay });
             Instance.EntFireAtTarget({ target: this.model, input: "SetAnimationNoResetNotLooping", value: boss_death_animation, delay: boss_death_animation_delay });
         }
+    }
+    boss_clear() {
+        if (this.phy.IsValid()) this.phy.Remove();
+        else if (this.hpbar.IsValid()) this.hpbar.Remove();
+        else if (this.model.IsValid()) this.model.Remove();
+        deafult_boss = null;
+        Timer = null;
     }
 }
 
@@ -360,8 +351,8 @@ class QueueMain {
             if (Queue_pause || !deafult_boss.phy?.IsValid()) return;
             deafult_boss.hatetime += 0.1;
             deafult_boss.target_change();
-            deafult_boss.dynamic_track();
             deafult_boss.boss_statue_check();
+            deafult_boss.dynamic_track();
             Instance.SetNextThink(Instance.GetGameTime() + this.delay);
         })
         Instance.SetNextThink(Math.round(Instance.GetGameTime()));
@@ -374,8 +365,8 @@ let Queue_pause = false;
 
 //-------------------操作区--------------------
 
-//初始化boss,创建任意实体对脚本输出runscriptinput,参数栏填写script_init
-Instance.OnScriptInput("script_init", (inputData) => {
+//初始化boss
+Instance.OnActivate(() => {
     const template = Instance.FindEntityByName(boss_template_targetname);
     const position = Instance.FindEntityByName(boss_position_targetname)?.GetAbsOrigin();
     config.template = template;
@@ -383,8 +374,6 @@ Instance.OnScriptInput("script_init", (inputData) => {
     deafult_boss = new BossMain(config);
     Timer = new QueueMain();
     deafult_boss.boss_init();
-    Timer.startthink();
-    Queue_pause = false;
 })
 
 //boss血量减少函数,同上对脚本进行输出,参数栏填写boss_hp_subract
@@ -406,8 +395,18 @@ Instance.OnScriptInput("boss_unfreeze", (inputData) => {
 })
 
 Instance.OnRoundEnd((event) => {
+    if (deafult_boss) deafult_boss.boss_clear();
     Queue_pause = true;
     deafult_boss = null;
     Timer = null;
+    Instance.EntFireAtName({ name: boss_script, input: "kill" });
+})
+
+Instance.OnRoundStart((event) => {
+    if (deafult_boss) deafult_boss.boss_clear();
+    Queue_pause = true;
+    deafult_boss = null;
+    Timer = null;
+    Instance.EntFireAtName({ name: boss_script, input: "kill" });
 })
 
