@@ -29,6 +29,11 @@ import { CSGearSlot, CSPlayerController, CSPlayerPawn, Instance, PointTemplate }
  * point_script现需要封装至point_template,每回合自动清理
  * 跑图参数现已经移至boss_template.vmap的实体中
  */
+/**
+ * 5.11更新内容
+ * 加强了部分实体的有效性校验
+ * 添加boss死亡事件输出
+ */
 //服务器配置
 const Server_tickrate = 64;
 const Server_tickInterval = 1 / Server_tickrate;
@@ -42,6 +47,9 @@ const boss_position_targetname = "boss_spawn_point";//boss生成位置targetname
 const boss_phys_targetname = "boss_physbox";//boss物理碰撞实体的targetname配置
 const boss_hpbar_targetname = "boss_hp_text";//boss血条实体的targetname配置
 const boss_model_targetname = "boss_model";//boss模型的targetname配置
+const boss_end_relay = "boss_end_relay";//boss死亡后自动触发的relay,可自行配置targetname,修改的同时需要将地图中的relay名称同步更改
+const boss_end_relay_boolean = true;//boss是否启用死亡后的relay输出
+const boss_end_relay_delay = 0;//boss是否启用死亡后的relay输出延迟
 const boss_track_traget_boolean = true;//boss锁定目标显示开关,若不需要改为false
 const boss_death_animation_boolean = false;//boss是否启用死亡动画,若启用则需要配置下方动画输出
 const boss_death_animation = "";//boss死亡动画名称,对应模型编辑器内的动作名字,未启用死亡动画则不用管
@@ -318,18 +326,20 @@ class BossMain {
     boss_death() {
         if (!boss_death_animation_boolean) {
             this.isActive = false;
-            this.phy.Remove();
-            this.hpbar.Remove();
-            this.model.Remove();
+            if (this.phy.IsValid()) this.phy.Remove();
+            else if (this.hpbar.IsValid()) this.hpbar.Remove();
+            else if (this.model.IsValid()) this.model.Remove();
             Queue_pause = true;//终止循环
+            if (boss_end_relay_boolean) { Instance.EntFireAtName({ name: boss_end_relay, input: "Trigger", delay: boss_end_relay_delay }) };
             return;
         }
         else {
             this.isActive = false;
-            this.hpbar.Remove();
+            if (this.hpbar.IsValid()) this.hpbar.Remove();
             Queue_pause = true;//终止循环
             Instance.EntFireAtTarget({ target: this.model, input: "SetIdleAnimationNotLooping", value: boss_death_animation, delay: boss_death_animation_delay });
             Instance.EntFireAtTarget({ target: this.model, input: "SetAnimationNoResetNotLooping", value: boss_death_animation, delay: boss_death_animation_delay });
+            if (boss_end_relay_boolean) { Instance.EntFireAtName({ name: boss_end_relay, input: "Trigger", delay: boss_end_relay_delay }) };
         }
     }
     boss_clear() {
