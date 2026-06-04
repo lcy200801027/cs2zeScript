@@ -34,6 +34,10 @@ import { CSGearSlot, CSPlayerController, CSPlayerPawn, Instance, PointTemplate }
  * 加强了部分实体的有效性校验
  * 添加boss死亡事件输出
  */
+/**
+ * 6.4更新
+ * 为boss禁止移动事件独立添加标识,现不会再与玩家锁定的状态刷新冲突
+ */
 //服务器配置
 const Server_tickrate = 64;
 const Server_tickInterval = 1 / Server_tickrate;
@@ -192,6 +196,7 @@ class BossMain {
         this.model = null;//为boss模型创建变量
         this.strafe = false;//boss是否处于加速状态
         this.slow = false;//boss是否处于减速状态
+        this.freeze = true;//boss是否被禁止移动
     }
     boss_init() {
         const EntityArray = this.template?.ForceSpawn(this.position);//在目标点位生成模板,并储存模板实体到数组
@@ -235,7 +240,7 @@ class BossMain {
         }
     }
     dynamic_track() {
-        if (!this.isActive || !this.phy?.IsValid() || this.health == 0) return;
+        if (!this.isActive || !this.phy?.IsValid() || this.health == 0 || this.freeze) return;
         if (!this.target?.IsValid()) { this.hatetime = config.hatred; this.target_change(); return };
         let angle_pre = CalculateQangleFromTarget(this.phy, this.target);//计算面向目标实体的角度
         angle_pre.pitch = 0;//仅保留水平方向角度
@@ -396,12 +401,12 @@ Instance.OnScriptInput("boss_death", (inputData) => {
 
 //关闭boss移动,同上对脚本进行输出,参数栏填写boss_freeze
 Instance.OnScriptInput("boss_freeze", (inputData) => {
-    deafult_boss.isActive = false;
+    deafult_boss.freeze = true;
 })
 
 //恢复boss移动,同上对脚本进行输出,参数栏填写boss_unfreeze
 Instance.OnScriptInput("boss_unfreeze", (inputData) => {
-    deafult_boss.isActive = true;
+    deafult_boss.freeze = false;
 })
 
 Instance.OnRoundEnd((event) => {
